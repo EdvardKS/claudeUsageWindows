@@ -80,6 +80,20 @@ if (-not (Test-Path -LiteralPath $script:StateDir)) {
     New-Item -ItemType Directory -Path $script:StateDir -Force | Out-Null
 }
 
+# Shared string tables and plan detection. If lib/ is missing the app still runs,
+# but every label degrades to its lookup key — visible breakage beats a silent
+# crash, and the log says why.
+$script:LibLoaded = $false
+try {
+    . (Join-Path $script:AppDir 'lib\i18n.ps1')
+    . (Join-Path $script:AppDir 'lib\plan.ps1')
+    $script:LibLoaded = $true
+} catch {
+    function T { param([string]$Key) return $Key }
+    function Set-AppLanguage { param([string]$Language) return 'en' }
+    function Get-ClaudePlan { return $null }
+}
+
 function Write-Log {
     param([string]$Message, [string]$Level = 'INFO')
     $line = '{0} [{1}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Message
@@ -97,6 +111,7 @@ function Write-Log {
 
 $script:Config = [pscustomobject]@{
     pollSeconds   = 900
+    language      = 'auto'
     autoUpdate    = $true
     warnPercent   = 80
     critPercent   = 95
@@ -131,16 +146,20 @@ if (Test-Path -LiteralPath $configPath) {
 # 15s is the "real time" setting; anything below that is just wasted requests.
 if ($script:Config.pollSeconds -lt 15) { $script:Config.pollSeconds = 15 }
 
+# 'auto' follows the Windows UI language; 'en'/'es' pin it.
+$script:Lang = Set-AppLanguage ([string]$script:Config.language)
+Write-Log ("language: {0} (config: {1})" -f $script:Lang, $script:Config.language)
+
 # Choices offered in the tray menu, in the order they appear.
 $script:PollChoices = @(
-    @{ Seconds = 15;   Label = 'Tiempo real (15 s)' }
-    @{ Seconds = 60;   Label = 'Cada minuto' }
-    @{ Seconds = 120;  Label = 'Cada 2 minutos' }
-    @{ Seconds = 300;  Label = 'Cada 5 minutos' }
-    @{ Seconds = 900;  Label = 'Cada 15 minutos' }
-    @{ Seconds = 1800; Label = 'Cada 30 minutos' }
-    @{ Seconds = 3600; Label = 'Cada hora' }
-    @{ Seconds = 7200; Label = 'Cada 2 horas' }
+    @{ Seconds = 15;   Key = 'poll.realtime' }
+    @{ Seconds = 60;   Key = 'poll.min1' }
+    @{ Seconds = 120;  Key = 'poll.min2' }
+    @{ Seconds = 300;  Key = 'poll.min5' }
+    @{ Seconds = 900;  Key = 'poll.min15' }
+    @{ Seconds = 1800; Key = 'poll.min30' }
+    @{ Seconds = 3600; Key = 'poll.hour1' }
+    @{ Seconds = 7200; Key = 'poll.hour2' }
 )
 
 function ConvertTo-Color {
@@ -224,23 +243,23 @@ function ConvertFrom-UsageBody {
     if ($hasLimits) {
         foreach ($limit in $Body.limits) {
             $label = switch ($limit.kind) {
-                'session'       { 'Sesion' }
-                'weekly_all'    { 'Semana - todos los modelos' }
+                'session'       { T 'limit.session' }
+                'weekly_all'    { T 'limit.weekly_all' }
                 'weekly_scoped' {
                     $name = $null
                     if ($limit.scope -and $limit.scope.model) { $name = $limit.scope.model.display_name }
-                    if ($name) { "Semana - $name" } else { 'Semana - modelo especifico' }
+                    if ($name) { (T 'limit.weekly_scoped') -f $name } else { T 'limit.weekly_generic' }
                 }
                 default         { [string]$limit.kind }
             }
-            # Tooltip needs distinct short names, otherwise both weekly rows read "Semana".
+            # Tooltip needs distinct short names, otherwise both weekly rows read "Week".
             $short = switch ($limit.kind) {
-                'session'    { 'Sesion' }
-                'weekly_all' { 'Semana' }
+                'session'    { T 'short.session' }
+                'weekly_all' { T 'short.weekly' }
                 'weekly_scoped' {
                     if ($limit.scope -and $limit.scope.model -and $limit.scope.model.display_name) {
                         $limit.scope.model.display_name
-                    } else { 'Modelo' }
+                    } else { T 'short.model' }
                 }
                 default      { [string]$limit.kind }
             }
@@ -254,8 +273,8 @@ function ConvertFrom-UsageBody {
         }
     } else {
         $fallback = @(
-            @{ Kind = 'session';    Bucket = 'five_hour'; Label = 'Sesion';                     Short = 'Sesion' },
-            @{ Kind = 'weekly_all'; Bucket = 'seven_day'; Label = 'Semana - todos los modelos'; Short = 'Semana' }
+            @{ Kind = 'session';    Bucket = 'five_hour'; Label = (T 'limit.session');    Short = (T 'short.session') },
+            @{ Kind = 'weekly_all'; Bucket = 'seven_day'; Label = (T 'limit.weekly_all'); Short = (T 'short.weekly') }
         )
         foreach ($f in $fallback) {
             if ($Body.PSObject.Properties.Name -notcontains $f.Bucket) { continue }
@@ -303,7 +322,7 @@ function Restore-Cache {
 $script:Rows        = @()
 $script:FetchedAt   = $null
 $script:Stale       = $true
-$script:LastError   = 'sin datos todavia'
+$script:LastError   = (T 'err.nodata')
 $script:FetchPs     = $null
 $script:FetchHandle = $null
 $script:PollTimer   = $null
@@ -365,21 +384,21 @@ function Complete-Fetch {
                 Write-Log ("ok: " + (($rows | ForEach-Object { "$($_.Kind)=$($_.Percent)%" }) -join ' '))
             } else {
                 $script:Stale     = $true
-                $script:LastError = 'respuesta sin datos de limites'
+                $script:LastError = (T 'err.nolimits')
                 Write-Log 'response contained no limit rows' 'WARN'
             }
         } catch {
             $script:Stale     = $true
-            $script:LastError = 'respuesta ilegible'
+            $script:LastError = (T 'err.unreadable')
             Write-Log "parse failed: $($_.Exception.Message)" 'ERROR'
         }
     } else {
         $script:Stale = $true
-        $err = if ($payload) { [string]$payload.error } else { 'sin respuesta' }
+        $err = if ($payload) { [string]$payload.error } else { (T 'err.noresponse') }
         $script:LastError = switch ($err) {
-            'no-credentials' { 'inicia sesion en Claude Code' }
-            'no-token'       { 'inicia sesion en Claude Code' }
-            'token-expired'  { 'credencial caducada: abre Claude Code' }
+            'no-credentials' { T 'err.login' }
+            'no-token'       { T 'err.login' }
+            'token-expired'  { T 'err.expired' }
             default          { $err }
         }
         Write-Log "fetch failed: $err" 'WARN'
@@ -411,15 +430,15 @@ function Get-VisibleKinds {
 
 function Format-Reset {
     param($ResetsAt)
-    if (-not $ResetsAt) { return 'sin fecha de reset' }
+    if (-not $ResetsAt) { return (T 'reset.none') }
     try {
         $when = [datetimeoffset]::Parse([string]$ResetsAt).ToLocalTime()
         $span = $when - [datetimeoffset]::Now
-        if ($span.TotalSeconds -le 0) { return 'reset inminente' }
-        if ($span.TotalDays -ge 1) { return ('reset en {0}d {1}h' -f [int]$span.TotalDays, $span.Hours) }
-        if ($span.TotalHours -ge 1) { return ('reset en {0}h {1}m' -f [int]$span.TotalHours, $span.Minutes) }
-        return ('reset en {0}m' -f [math]::Max(1, [int]$span.TotalMinutes))
-    } catch { return 'fecha de reset invalida' }
+        if ($span.TotalSeconds -le 0) { return (T 'reset.imminent') }
+        if ($span.TotalDays -ge 1) { return ((T 'reset.days') -f [int]$span.TotalDays, $span.Hours) }
+        if ($span.TotalHours -ge 1) { return ((T 'reset.hours') -f [int]$span.TotalHours, $span.Minutes) }
+        return ((T 'reset.minutes') -f [math]::Max(1, [int]$span.TotalMinutes))
+    } catch { return (T 'reset.invalid') }
 }
 
 function Format-ResetShort {
@@ -428,7 +447,7 @@ function Format-ResetShort {
     if (-not $ResetsAt) { return '?' }
     try {
         $span = [datetimeoffset]::Parse([string]$ResetsAt).ToLocalTime() - [datetimeoffset]::Now
-        if ($span.TotalSeconds -le 0) { return 'ya' }
+        if ($span.TotalSeconds -le 0) { return (T 'short.now') }
         if ($span.TotalDays -ge 1)  { return ('{0}d{1}h' -f [int]$span.TotalDays, $span.Hours) }
         if ($span.TotalHours -ge 1) { return ('{0}h{1}m' -f [int]$span.TotalHours, $span.Minutes) }
         return ('{0}m' -f [math]::Max(1, [int]$span.TotalMinutes))
@@ -623,6 +642,29 @@ $script:PanelHeader   = $null
 $script:PanelStatus   = $null
 $script:PanelBuiltFor = $null
 
+$script:PlanCache   = $null
+$script:PlanCachedAt = [datetime]::MinValue
+
+function Get-PlanCaption {
+    <# Which subscription these numbers belong to. Read from the local credential
+       file, so it costs no request; re-read every 5 minutes in case the user
+       switches plans or signs in again while the tray is running. #>
+    if (-not $script:LibLoaded) { return '' }
+    if (-not $script:PlanCache -or ((Get-Date) - $script:PlanCachedAt).TotalMinutes -gt 5) {
+        try {
+            $script:PlanCache    = Get-ClaudePlan -CredPath $script:CredPath
+            $script:PlanCachedAt = Get-Date
+        } catch {
+            return ''
+        }
+    }
+    if (-not $script:PlanCache) { return '' }
+    if ($script:PlanCache.Expired) {
+        return ('{0} - {1}' -f $script:PlanCache.PlanName, (T 'plan.expired'))
+    }
+    return [string]$script:PlanCache.PlanName
+}
+
 function New-PanelLabel {
     param([string]$Text, [int]$X, [int]$Y, [int]$Width, [int]$Height,
           [System.Drawing.Color]$Color, [single]$Size, [string]$Style = 'Regular',
@@ -650,10 +692,15 @@ function Build-Panel {
     $script:PanelControls = @{}
 
     $y = 12
-    $script:Panel.Controls.Add((New-PanelLabel 'Uso de Claude' 16 $y 150 18 $script:TextMain 10 'Bold'))
+    $script:Panel.Controls.Add((New-PanelLabel (T 'panel.title') 16 $y 150 18 $script:TextMain 10 'Bold'))
     $script:PanelHeader = New-PanelLabel '' 130 $y 144 18 $script:TextDim 8 'Regular' 'MiddleRight'
     $script:Panel.Controls.Add($script:PanelHeader)
-    $y += 28
+    $y += 18
+
+    # Which plan these numbers belong to. Read locally, costs no extra request.
+    $script:PanelPlan = New-PanelLabel (Get-PlanCaption) 16 $y 258 14 $script:TextDim 7.5
+    $script:Panel.Controls.Add($script:PanelPlan)
+    $y += 20
 
     foreach ($kind in $Kinds) {
         $row = Get-Row $kind
@@ -685,13 +732,31 @@ function Build-Panel {
     }
 
     if ($Kinds.Count -eq 0) {
-        $script:Panel.Controls.Add((New-PanelLabel 'Sin datos de uso.' 16 $y 258 18 $script:TextDim 9))
+        $script:Panel.Controls.Add((New-PanelLabel (T 'panel.empty') 16 $y 258 18 $script:TextDim 9))
         $y += 24
     }
 
     $script:PanelStatus = New-PanelLabel '' 16 $y 258 16 $script:ColStale 8
     $script:PanelStatus.Visible = $false
     $script:Panel.Controls.Add($script:PanelStatus)
+
+    # Discreet credit, in the same grey the app uses for "no data" so it never
+    # competes with the percentages. Underlines on hover, opens the site on click.
+    $script:PanelCredit = New-PanelLabel 'developed by iaeks.com' 16 $y 258 14 `
+                              $script:ColStale 7 'Regular' 'MiddleRight'
+    $script:PanelCredit.Cursor = [System.Windows.Forms.Cursors]::Hand
+    $script:PanelCredit.Add_MouseEnter({
+        $this.ForeColor = $script:TextDim
+        $this.Font = New-Object System.Drawing.Font 'Segoe UI', 7, ([System.Drawing.FontStyle]::Underline)
+    })
+    $script:PanelCredit.Add_MouseLeave({
+        $this.ForeColor = $script:ColStale
+        $this.Font = New-Object System.Drawing.Font 'Segoe UI', 7, ([System.Drawing.FontStyle]::Regular)
+    })
+    $script:PanelCredit.Add_Click({
+        try { Start-Process 'https://iaeks.com' } catch { Write-Log "could not open site: $($_.Exception.Message)" 'WARN' }
+    })
+    $script:Panel.Controls.Add($script:PanelCredit)
 
     $script:PanelBaseHeight = $y
     $script:Panel.ResumeLayout()
@@ -707,9 +772,9 @@ function Update-Panel {
     }
 
     $header = if ($script:FetchedAt) {
-        if ($script:Stale) { "sin conexion - $($script:FetchedAt.ToString('HH:mm'))" }
-        else { "actualizado $($script:FetchedAt.ToString('HH:mm'))" }
-    } else { 'sin datos' }
+        if ($script:Stale) { (T 'panel.offline') -f $script:FetchedAt.ToString('HH:mm') }
+        else { (T 'panel.updated') -f $script:FetchedAt.ToString('HH:mm') }
+    } else { T 'panel.nodata' }
     # Assigning an identical string is a no-op in WinForms, so unchanged labels
     # never repaint. That is what keeps the panel from flickering every second.
     if ($script:PanelHeader.Text -ne $header) { $script:PanelHeader.Text = $header }
@@ -739,7 +804,15 @@ function Update-Panel {
         $script:PanelStatus.Text = $script:LastError
     }
 
-    $height = $script:PanelBaseHeight + $(if ($showStatus) { 28 } else { 8 })
+    $plan = Get-PlanCaption
+    if ($script:PanelPlan -and $script:PanelPlan.Text -ne $plan) { $script:PanelPlan.Text = $plan }
+
+    # The credit sits under whichever of the two is last: the error line when it is
+    # showing, the final limit row otherwise.
+    $creditTop = $script:PanelBaseHeight + $(if ($showStatus) { 22 } else { 2 })
+    if ($script:PanelCredit.Top -ne $creditTop) { $script:PanelCredit.Top = $creditTop }
+
+    $height = $creditTop + 22
     if ($script:Panel.Height -ne $height) { $script:Panel.Height = $height }
 }
 
@@ -788,9 +861,9 @@ function Get-TooltipText {
         [void]$lines.Add(('{0} {1}% - {2}' -f $row.Short, [int][math]::Round($row.Percent), (Format-ResetShort $row.ResetsAt)))
     }
     if ($lines.Count -eq 0) {
-        [void]$lines.Add($(if ($script:LastError) { $script:LastError } else { 'sin datos' }))
+        [void]$lines.Add($(if ($script:LastError) { $script:LastError } else { T 'panel.nodata' }))
     } elseif ($script:Stale) {
-        [void]$lines.Add('(sin conexion)')
+        [void]$lines.Add((T 'tip.offline'))
     }
 
     $text = ($lines -join "`n")
@@ -898,13 +971,13 @@ function Set-PollInterval {
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 
-$miRefresh = $menu.Items.Add('Actualizar ahora')
+$miRefresh = $menu.Items.Add((T 'menu.refresh'))
 $miRefresh.Add_Click({ Start-Fetch })
 
-$miFrequency = New-Object System.Windows.Forms.ToolStripMenuItem 'Frecuencia de actualizacion'
+$miFrequency = New-Object System.Windows.Forms.ToolStripMenuItem (T 'menu.frequency')
 $script:PollMenuItems = @()
 foreach ($choice in $script:PollChoices) {
-    $item = New-Object System.Windows.Forms.ToolStripMenuItem $choice.Label
+    $item = New-Object System.Windows.Forms.ToolStripMenuItem (T $choice.Key)
     $item.Tag     = $choice.Seconds
     $item.Checked = ($choice.Seconds -eq $script:Config.pollSeconds)
     $item.Add_Click({ Set-PollInterval ([int]$this.Tag) }.GetNewClosure())
@@ -915,15 +988,36 @@ foreach ($choice in $script:PollChoices) {
 
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 
-$miFolder = $menu.Items.Add('Abrir carpeta de la app')
+$miLanguage = New-Object System.Windows.Forms.ToolStripMenuItem (T 'menu.language')
+foreach ($choice in @(
+    @{ Value = 'auto'; Label = (T 'menu.lang.auto') }
+    @{ Value = 'en';   Label = 'English' }
+    @{ Value = 'es';   Label = 'Espanol' }
+)) {
+    $item = New-Object System.Windows.Forms.ToolStripMenuItem $choice.Label
+    $item.Tag     = $choice.Value
+    $item.Checked = ([string]$script:Config.language -eq $choice.Value)
+    # Switching language rebuilds every label, menu item and tooltip. Restarting is
+    # both simpler and less error-prone than re-theming the live controls.
+    $item.Add_Click({
+        Save-ConfigValue 'language' ([string]$this.Tag)
+        Restart-Self
+    }.GetNewClosure())
+    [void]$miLanguage.DropDownItems.Add($item)
+}
+[void]$menu.Items.Add($miLanguage)
+
+[void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+
+$miFolder = $menu.Items.Add((T 'menu.folder'))
 $miFolder.Add_Click({ Start-Process explorer.exe $script:AppDir })
 
-$miLog = $menu.Items.Add('Ver registro')
+$miLog = $menu.Items.Add((T 'menu.log'))
 $miLog.Add_Click({
     if (Test-Path -LiteralPath $script:LogPath) { Start-Process notepad.exe $script:LogPath }
 })
 
-$script:MiAutoStart = New-Object System.Windows.Forms.ToolStripMenuItem 'Iniciar con Windows'
+$script:MiAutoStart = New-Object System.Windows.Forms.ToolStripMenuItem (T 'menu.autostart')
 $script:MiAutoStart.CheckOnClick = $false
 $script:MiAutoStart.Checked = Test-AutoStart
 $script:MiAutoStart.Add_Click({
@@ -934,7 +1028,7 @@ $script:MiAutoStart.Add_Click({
 
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 
-$miExit = $menu.Items.Add('Salir')
+$miExit = $menu.Items.Add((T 'menu.exit'))
 $miExit.Add_Click({ [System.Windows.Forms.Application]::Exit() })
 
 $script:NotifyIcon.ContextMenuStrip = $menu
@@ -1013,7 +1107,7 @@ if ($Preview) {
     $created.Icon.Dispose()
     [void][ClaudeTray.Native]::DestroyIcon($created.Handle)
 
-    "Preview guardado en $Preview"
+    "Preview saved to $Preview"
     exit 0
 }
 
@@ -1028,7 +1122,10 @@ $script:TrayPath = Join-Path $script:AppDir 'tray.ps1'
 
 function Get-SourceStamp {
     $parts = @()
-    foreach ($file in @($script:TrayPath, $configPath)) {
+    $watched = @($script:TrayPath, $configPath,
+                 (Join-Path $script:AppDir 'lib\i18n.ps1'),
+                 (Join-Path $script:AppDir 'lib\plan.ps1'))
+    foreach ($file in $watched) {
         try {
             if (Test-Path -LiteralPath $file) {
                 $item = Get-Item -LiteralPath $file

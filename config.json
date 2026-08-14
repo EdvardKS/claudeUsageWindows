@@ -1,5 +1,6 @@
-{
+﻿{
   "pollSeconds": 900,
+  "language": "auto",
   "autoUpdate": true,
   "warnPercent": 80,
   "critPercent": 95,
