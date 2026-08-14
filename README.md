@@ -31,9 +31,26 @@ Right: one left-click opens the panel with every limit and its reset countdown.<
 | Windows PowerShell 5.1 | Ships with Windows — nothing to install |
 | .NET Framework 4.8 | Ships with Windows — nothing to install |
 | Claude Code installed and logged in | The app reads the credential Claude Code already stores |
+| A Claude **Pro** or **Max** subscription | The usage endpoint only exists for subscription quotas |
 
 There are **zero third-party dependencies**. No pip, no npm, no NuGet, no vendored
-binaries. The whole app is five plain-text scripts you can read in one sitting.
+binaries. The whole app is a handful of plain-text scripts you can read in one sitting.
+
+The installer speaks **English and Spanish**, picks the right one from your Windows
+UI language, and you can switch it any time from the tray menu.
+
+### Where it will not work
+
+Being upfront about this, because the installer refuses to install rather than
+leaving you with a permanently grey icon:
+
+| Situation | Why | Installer behaviour |
+|---|---|---|
+| **API key, Bedrock or Vertex** instead of a subscription | Those are billed per token and have no session or weekly quota. There is nothing to display. | Detects it, explains it, aborts |
+| **Claude Code inside WSL** | The credential lives in the Linux filesystem; a Windows process cannot reach it. | Detects "not signed in", aborts |
+| **AppLocker / Constrained Language Mode** | The app needs `Add-Type` with `DllImport` to draw the icon, which that mode forbids. | Detects it, aborts |
+| **Group policy forcing `AllSigned`** | `-ExecutionPolicy Bypass` cannot override a machine policy. | Warns, and points you at `trust.cmd` |
+| **Anything that is not Windows** | WinForms and Windows PowerShell 5.1. | — |
 
 ---
 
@@ -52,6 +69,7 @@ flowchart LR
             VBS["launch.vbs<br/><i>hidden-window launcher</i>"]
             TRAY["tray.ps1<br/><i>the whole app</i>"]
             CFG["config.json<br/><i>your settings</i>"]
+            LIB["lib\\i18n.ps1 · lib\\plan.ps1<br/><i>strings + plan detection</i>"]
         end
 
         RUN["🔑 HKCU\\...\\CurrentVersion\\Run<br/>ClaudeUsageTray<br/><i>the only registry write</i>"]
@@ -71,6 +89,7 @@ flowchart LR
     RUN -->|at logon| VBS
     VBS --> TRAY
     CFG --> TRAY
+    LIB --> TRAY
     CRED -.->|read only| TRAY
     TRAY -->|"HTTPS · Bearer token · read-only GET"| API
     API -->|"limits[] JSON"| TRAY
@@ -92,59 +111,122 @@ your own profile. One registry value, two state files, one outbound request.
 
 ## Install
 
-**Double-click `install.cmd`. That is the entire installation.**
+**Double-click `install.cmd`.** No administrator rights, no UAC prompt, no MSI, no
+elevation at any point. The wizard walks you through eight steps, shows you exactly
+what it found and what it is about to do, and asks for **one** confirmation before
+touching anything.
 
-To be explicit about what that means, because it matters:
+The important part: it tells you what it found *before* it writes anything, and it
+refuses to install on a machine where the app cannot work.
 
-- It does **not** require administrator rights.
-- It does **not** ask you any questions or show any prompts.
-- It does **not** run an installer, MSI, or setup wizard.
-- It does **not** write to `Program Files`, `HKLM`, `ProgramData`, or any other
-  user's profile.
-- When it finishes, the app is already running *and* already registered to start
-  at your next logon. There is no second step.
+```
+  Claude Usage Tray - Setup
+  Shows your Claude quota in the Windows notification area
+  --------------------------------------------------------------
 
-What `install.cmd` actually does, in order (see `setup.ps1`, ~140 readable lines):
+  [1/8] Language
+      Detected system language: Espanol
+      Press E for English, S for Spanish, or Enter to keep it
 
-1. **Pins the folder** so OneDrive keeps the files on local disk (`attrib +P -U`).
-   Without this, Files On-Demand could leave a cloud placeholder that Windows
-   cannot start at logon.
-2. **Removes the Mark-of-the-Web** (`Unblock-File`) from the folder's files, which
-   is what would otherwise make Windows treat synced scripts as untrusted.
-3. **Trusts the signing certificate** — *only if* a `ClaudeUsageTray.cer` sits next
-   to the scripts, i.e. only if you generated one yourself with `trust.cmd`. A
-   fresh clone from GitHub has no `.cer`, so this step is skipped entirely.
-4. **Registers autostart** under
-   `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `ClaudeUsageTray`,
-   pointing at `launch.vbs` (which starts PowerShell with a hidden window).
-5. **Probes the API once** (`tray.ps1 -Once`) and prints the result, so a failure
-   is visible immediately rather than as a silent missing icon.
-6. **Starts the tray icon.**
+  [2/8] What this app does
+      - Draws your session and weekly Claude usage into a 16x16 tray icon.
+      - Reads the OAuth token Claude Code already stored on this account.
+      - Calls exactly one address: api.anthropic.com. Nothing else, ever.
+      - No admin rights, no service, no telemetry, no third-party code.
+
+  [3/8] Checking this machine
+      Windows version            10.0.26200
+      Windows PowerShell         5.1.26100.8875
+      Language mode              FullLanguage
+      Execution policy           Bypass
+      App files                  ok
+
+  [4/8] Your Claude plan
+      Detected: Claude Max 5x
+      Rate limit tier: default_claude_max_5x
+
+      Quota limits are read from this subscription.
+
+  [5/8] Where it will be installed
+      From    D:\Downloads\claudeUsageWindows
+      To      C:\Users\you\AppData\Local\Programs\ClaudeUsageTray
+
+      You can delete the source folder afterwards.
+      Cache and log              C:\Users\you\AppData\Local\ClaudeUsageTray
+      Autostart                  HKCU\...\Run\ClaudeUsageTray
+
+  [6/8] What it will touch
+      It writes
+        + ...\Programs\ClaudeUsageTray
+        + ...\Local\ClaudeUsageTray
+        + HKCU\...\CurrentVersion\Run\ClaudeUsageTray
+
+      It never touches
+        - HKLM or any machine-wide setting
+        - Program Files, ProgramData, System32
+        - Any other user account on this PC
+        - Any host other than api.anthropic.com
+
+      Press Enter to install, or Ctrl+C to cancel
+
+  [7/8] Installing ...
+  [8/8] Testing the connection ...
+```
+
+### Which plan you are on
+
+Step 4 is not decoration. The app reads `rateLimitTier` out of the credential file
+Claude Code already wrote and tells you which subscription these numbers belong to:
+
+| `rateLimitTier` contains | Shown as |
+|---|---|
+| `pro` | Claude Pro |
+| `max_5x` | Claude Max 5x |
+| `max_20x` | Claude Max 20x |
+| something unrecognised | falls back to `subscriptionType`, never invents a name |
+| no credential at all | *not signed in* — install aborts |
+| an API-key environment | *API key (no quota)* — install aborts |
+
+The same line appears under the title in the detail panel, so you always know which
+plan the percentages refer to. It is read locally and costs no extra request.
 
 ```mermaid
 flowchart TD
-    A["👆 Double-click install.cmd"] --> B["powershell -File setup.ps1 -Install"]
-    B --> C["1 · Pin folder on disk<br/><code>attrib +P -U</code><br/><i>beats OneDrive Files On-Demand</i>"]
-    C --> D["2 · Strip Mark-of-the-Web<br/><code>Unblock-File</code>"]
-    D --> E{"3 · ClaudeUsageTray.cer<br/>present in folder?"}
-    E -->|"No — the normal case,<br/>a fresh clone has none"| G
-    E -->|"Yes — only if YOU ran trust.cmd"| F["Trust cert in<br/>CurrentUser store"]
-    F --> G["4 · Write HKCU Run value<br/><i>→ wscript launch.vbs</i>"]
-    G --> H["5 · Probe API once<br/><code>tray.ps1 -Once</code>"]
-    H --> I{"API answered?"}
-    I -->|Yes| J["✅ prints your real numbers"]
-    I -->|No| K["⚠️ prints the reason<br/><i>install still succeeds</i>"]
-    J --> L["6 · Start tray icon"]
-    K --> L
-    L --> M["🟢 Done — running now<br/>AND set for next logon"]
+    A["👆 Double-click install.cmd"] --> B["Detect language<br/><i>Get-UICulture</i>"]
+    B --> C["Preflight<br/><i>OS · PowerShell · language mode · policy</i>"]
+    C -->|"Constrained Language Mode"| X1["🛑 Abort — nothing written"]
+    C --> D["Read rateLimitTier<br/><i>from .credentials.json</i>"]
+    D -->|"API key / Bedrock / Vertex"| X2["🛑 Abort — no quota to show"]
+    D -->|"no credential (or WSL)"| X3["🛑 Abort — not signed in"]
+    D -->|"Pro / Max 5x / Max 20x"| E["Show source → destination"]
+    E --> F["Show what it writes<br/>and what it never touches"]
+    F --> G{"Enter to continue"}
+    G --> H["Copy files · strip Mark-of-the-Web<br/>pin in OneDrive only if applicable"]
+    H --> I["Write HKCU Run value"]
+    I --> J["Probe the API once<br/><code>tray.ps1 -Once</code>"]
+    J --> K["🟢 Running now AND set for next logon"]
 
     style A fill:#1a3a1a,stroke:#3ED16B,color:#fff
-    style M fill:#1a3a1a,stroke:#3ED16B,color:#fff
-    style K fill:#4a3a1a,stroke:#F5A623,color:#fff
+    style K fill:#1a3a1a,stroke:#3ED16B,color:#fff
+    style X1 fill:#2a1416,stroke:#FF5A5F,color:#fff
+    style X2 fill:#2a1416,stroke:#FF5A5F,color:#fff
+    style X3 fill:#2a1416,stroke:#FF5A5F,color:#fff
 ```
 
-No step in that chart requests elevation, opens a dialog, or contacts any host
-other than `api.anthropic.com` in step 5.
+Every abort path leaves the machine exactly as it found it: no files copied, no
+registry value written.
+
+### Command-line flags
+
+| Command | What it does |
+|---|---|
+| `install.cmd` | The full wizard |
+| `install.cmd /silent` | No questions, no pauses — still prints everything |
+| `install.cmd /repair` | Re-runs the checks and rewrites autostart. **Use this first whenever anything misbehaves.** |
+| `install.cmd /inplace` | Runs from the current folder instead of copying it — for folders synced across your own machines |
+| `install.cmd /en` · `/es` | Force a language |
+
+Flags combine: `install.cmd /silent /en`.
 
 If you do not see the icon, it is in the hidden-icons flyout (the `^` arrow next to
 the clock). Drag it out to pin it to the taskbar.
@@ -152,8 +234,8 @@ the clock). Drag it out to pin it to the taskbar.
 ### Uninstall
 
 Double-click **`uninstall.cmd`**. It stops the process and deletes the `HKCU` Run
-value. It intentionally leaves your files and the local cache in place; delete
-`%LOCALAPPDATA%\ClaudeUsageTray` yourself if you want them gone.
+value, then tells you where the files and the cache still are so you can delete them
+yourself.
 
 Uninstalling is genuinely complete: one registry value under your own user hive and
 one process. Nothing else was ever created.
@@ -303,9 +385,10 @@ flowchart LR
 ```
 
 **Network:** exactly one outbound host, `api.anthropic.com`, one endpoint,
-`GET /api/oauth/usage`, TLS 1.2. `grep -i 'http' tray.ps1` returns that single URL
-and nothing else. There is no update server, no analytics, no crash reporter, no
-"phone home".
+`GET /api/oauth/usage`, TLS 1.2. There is no update server, no analytics, no crash
+reporter, no "phone home". The only other URL anywhere in the source is the
+`iaeks.com` credit at the bottom of the panel, which does nothing until *you* click
+it and then just opens your browser.
 
 **Your token:**
 - read inside an isolated background runspace, used for one request, discarded;
@@ -342,22 +425,25 @@ Do not trust the diagrams. Trust the output of these commands, run in the app
 folder:
 
 ```powershell
-# Every URL in the app. Expect exactly one line: api.anthropic.com
-Select-String -Path *.ps1,*.vbs,*.cmd -Pattern 'https?://'
+# Every URL in the app. Two hits, and only one of them is a network call:
+# the usage endpoint, plus the credit link the panel opens in YOUR browser
+# when you click it.
+Select-String -Path *.ps1,lib\*.ps1,*.vbs,*.cmd -Pattern 'https?://'
 
-# Any elevation or machine-wide write? The only hit is the comment in
-# setup.ps1 line 8 saying it never does one.
-Select-String -Path *.ps1,*.vbs,*.cmd -Pattern 'RunAs|HKLM|ProgramData|Program Files'
+# Any elevation or machine-wide write? Every hit is a comment or a UI string
+# stating that it never does one. No RunAs, no manifest, no HKLM write.
+Select-String -Path *.ps1,lib\*.ps1,*.vbs,*.cmd -Pattern 'RunAs|HKLM|ProgramData|Program Files'
 
-# Everywhere the token appears. Two hits: a null check, and the Authorization
-# header. Nowhere else.
-Select-String -Path tray.ps1 -Pattern 'accessToken'
+# Everywhere the token appears. Three hits: two null checks and the
+# Authorization header. Nowhere else — not the log, not the cache.
+Select-String -Path *.ps1,lib\*.ps1 -Pattern 'accessToken'
 
-# Every write to disk or registry in the whole app. Seven hits, all accounted for:
-#   setup.ps1:122  HKCU Run value          tray.ps1:851  same value, from the menu toggle
-#   tray.ps1:92/94 tray.log                tray.ps1:285  last.json cache
-#   tray.ps1:873   your config.json        trust.ps1:83  the optional .cer you generate
-Select-String -Path *.ps1 -Pattern 'Set-Content|Add-Content|Out-File|New-ItemProperty|WriteAllBytes'
+# Every write to disk or registry in the whole app:
+#   setup.ps1   HKCU Run value, and the install-time file copies
+#   tray.ps1    tray.log, last.json cache, config.json, the Run value again
+#               (the "Start with Windows" toggle)
+#   trust.ps1   the optional .cer you generate yourself
+Select-String -Path *.ps1,lib\*.ps1 -Pattern 'Set-Content|Add-Content|Out-File|New-ItemProperty|WriteAllBytes|Copy-Item'
 ```
 
 Then watch it on the wire if you want: the app makes one TLS request every
@@ -383,6 +469,7 @@ back into this file.
 ```jsonc
 {
   "pollSeconds": 900,      // refresh interval; clamped to a 15 s minimum
+  "language": "auto",      // "auto" follows Windows; "en" or "es" pin it
   "autoUpdate": true,      // restart itself when tray.ps1 changes on disk
   "warnPercent": 80,       // icon turns amber at this usage
   "critPercent": 95,       // icon turns red at this usage
@@ -409,11 +496,13 @@ Dropbox, a network share) propagates your own edits without manual restarts.
 | File | Purpose |
 |---|---|
 | `tray.ps1` | The whole app: fetch, icon rendering, detail panel, menu, timers |
+| `lib\i18n.ps1` | English and Spanish string tables, shared by the app and the installer |
+| `lib\plan.ps1` | Plan detection. Reads plan metadata only — never the token |
 | `launch.vbs` | Starts `tray.ps1` with no console window flash |
-| `install.cmd` → `setup.ps1 -Install` | One-click install (no admin, no prompts) |
+| `install.cmd` → `setup.ps1 -Install` | The wizard (no admin, one confirmation) |
 | `uninstall.cmd` → `setup.ps1 -Uninstall` | Stops it and removes autostart |
 | `trust.cmd` → `trust.ps1` | **Optional** local code signing |
-| `config.json` | Settings and colours |
+| `config.json` | Settings, language and colours |
 
 ### Debugging
 
@@ -433,13 +522,18 @@ shortcut to open it.
 
 ### Troubleshooting
 
+**When in doubt, run `install.cmd /repair`.** It re-runs every check, re-reports
+your plan, rewrites the autostart entry and restarts the app — without copying
+anything or changing your settings. It is the single diagnostic entry point.
+
 | Symptom | Cause / fix |
 |---|---|
 | Icon is grey | Data is stale. Open the panel — the reason is at the bottom. |
-| `no-credentials` | Claude Code has not been logged in on this account. |
-| `token-expired` | Open Claude Code once. The app will not refresh the token by design. |
+| `sign in to Claude Code` | No credential for this Windows account. Run `/repair` to see what was detected. |
+| `credential expired` | Open Claude Code once. The app will not refresh the token by design. |
 | No icon at all | Check the hidden-icons flyout; then check `tray.log`. |
-| Nothing starts at logon | Confirm `HKCU\...\Run\ClaudeUsageTray` exists; re-run `install.cmd`. |
+| Nothing starts at logon | `install.cmd /repair` rewrites `HKCU\...\Run\ClaudeUsageTray`. |
+| Labels show as `menu.exit`, `reset.days`… | `lib\i18n.ps1` is missing. Re-run `install.cmd`. |
 
 ---
 
@@ -467,3 +561,17 @@ the icon greys out and the app keeps failing harmlessly.
 
 MIT. Free to use, copy, modify, and redistribute, commercially or otherwise. See
 [`LICENSE`](LICENSE). Provided as-is, with no warranty.
+
+---
+
+## Author
+
+Built by **Edvard KS**.
+
+- **[iaeks.com](https://iaeks.com)** — AI engineering and automation
+- **[edvardks.com](https://edvardks.com)** — everything else
+
+Issues and pull requests are welcome. If this saved you from hitting a limit
+mid-sprint, a ⭐ on the repo is the cheapest way to say so.
+
+<p align="center"><sub>developed by <a href="https://iaeks.com">iaeks.com</a></sub></p>
