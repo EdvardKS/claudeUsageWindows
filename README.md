@@ -10,6 +10,15 @@ countdown. The colour goes green → amber → red as you approach the cap.
 No installer, no service, no background agent, no telemetry. It is a single
 PowerShell script that draws an icon.
 
+<p align="center">
+  <img src="img/tray-icon.png" alt="The tray icon: 7% session on top, 88% weekly below" height="90">
+  &nbsp;&nbsp;&nbsp;
+  <img src="img/detail-panel.png" alt="The detail panel showing session, weekly and per-model limits with reset countdowns" height="240">
+</p>
+
+<p align="center"><i>Left: the icon itself — session on top, week below, coloured by severity.<br/>
+Right: one left-click opens the panel with every limit and its reset countdown.</i></p>
+
 > 🇪🇸 Spanish version: [`README.es.md`](README.es.md)
 
 ---
