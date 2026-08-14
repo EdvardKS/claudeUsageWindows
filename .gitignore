@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------------------
+# Claude Usage Tray - files that must never reach a public repository
+# ---------------------------------------------------------------------------
+
+# Credentials and tokens. The app READS ~\.claude\.credentials.json at runtime
+# and never copies it here, but block the pattern anyway so an accidental copy
+# can never be committed.
+.credentials.json
+*credentials*.json
+*.token
+*.secret
+secrets.*
+.env
+.env.*
+
+# Signing material. The public .cer is generated per machine by trust.ps1 and is
+# personal to whoever ran it; the private key is non-exportable and must stay in
+# the user's certificate store.
+*.cer
+*.pfx
+*.p12
+*.pvk
+*.snk
+*.key
+
+# Local runtime state (normally under %LOCALAPPDATA%\ClaudeUsageTray, listed here
+# in case someone runs the app from a copy of this folder).
+last.json
+tray.log
+*.log
+
+# Per-machine user preferences. config.json IS tracked as the shipped default;
+# a local override belongs in config.local.json.
+config.local.json
+
+# Agent / editor scratch state
+.claude/
+.vscode/
+.idea/
+*.code-workspace
+
+# Preview and debug output
+preview*.png
+*.tmp
+*.bak
+*.old
+*.orig
+*.rej
+
+# Windows / OneDrive noise
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Archives of the app itself
+*.zip
+*.7z

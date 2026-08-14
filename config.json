@@ -1,0 +1,14 @@
+{
+  "pollSeconds": 900,
+  "autoUpdate": true,
+  "warnPercent": 80,
+  "critPercent": 95,
+  "showScopedRow": true,
+  "iconOutline": true,
+  "colors": {
+    "normal": "#3ED16B",
+    "warning": "#F5A623",
+    "critical": "#FF5A5F",
+    "stale": "#9AA0A6"
+  }
+}
