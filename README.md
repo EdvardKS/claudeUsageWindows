@@ -1,3 +1,30 @@
+<p align="center">
+  <a href="https://iaeks.com"><img src="img/iaeks-logo.png" alt="IA EKS" width="140"></a>
+</p>
+
+<h3 align="center">Built by <a href="https://iaeks.com">IA EKS</a></h3>
+
+<p align="center">
+  <b>AI engineering, automation and custom tooling.</b><br/>
+  We build the internal tools, agents and integrations that teams actually use.<br/>
+  Need something like this for your stack? <a href="https://iaeks.com">Let's talk.</a>
+</p>
+
+<p align="center">
+  <a href="https://iaeks.com"><img src="https://img.shields.io/badge/iaeks.com-0b1220?style=for-the-badge&logo=googlechrome&logoColor=white" alt="iaeks.com"></a>
+  <a href="https://edvardks.com"><img src="https://img.shields.io/badge/edvardks.com-0b1220?style=for-the-badge&logo=aboutdotme&logoColor=white" alt="edvardks.com"></a>
+  <a href="https://www.linkedin.com/in/edvardks"><img src="https://img.shields.io/badge/LinkedIn-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white" alt="LinkedIn"></a>
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-3ED16B?style=flat-square" alt="MIT"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4?style=flat-square" alt="Windows 10 / 11">
+  <img src="https://img.shields.io/badge/dependencies-none-3ED16B?style=flat-square" alt="No dependencies">
+  <img src="https://img.shields.io/badge/admin%20rights-not%20required-3ED16B?style=flat-square" alt="No admin rights">
+</p>
+
+---
+
 # Claude Usage Tray
 
 A tiny Windows tray icon that shows how much of your Claude quota you have used.
@@ -566,10 +593,17 @@ MIT. Free to use, copy, modify, and redistribute, commercially or otherwise. See
 
 ## Author
 
-Built by **Edvard KS**.
+<a href="https://iaeks.com"><img src="img/iaeks-logo.png" alt="IA EKS" width="90" align="left" hspace="16"></a>
 
-- **[iaeks.com](https://iaeks.com)** — AI engineering and automation
-- **[edvardks.com](https://edvardks.com)** — everything else
+Built by **Edvard KS** at **[IA EKS](https://iaeks.com)** — AI engineering,
+automation and custom tooling. If your team needs internal tools, agents or
+integrations built properly, that is what we do.
+
+- 🌐 **[iaeks.com](https://iaeks.com)** — what we build and how to hire us
+- 👤 **[edvardks.com](https://edvardks.com)** — personal site
+- 💼 **[linkedin.com/in/edvardks](https://www.linkedin.com/in/edvardks)** — get in touch
+
+<br clear="left"/>
 
 Issues and pull requests are welcome. If this saved you from hitting a limit
 mid-sprint, a ⭐ on the repo is the cheapest way to say so.
